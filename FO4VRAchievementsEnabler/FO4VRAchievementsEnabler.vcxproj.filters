@@ -35,8 +35,5 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="README.md" />
-    <None Include="steam_api64.def">
-      <Filter>Source Files</Filter>
-    </None>
   </ItemGroup>
 </Project>

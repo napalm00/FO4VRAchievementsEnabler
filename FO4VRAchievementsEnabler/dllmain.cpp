@@ -1,6 +1,9 @@
 // By naPalm (http://napalm.me)
 // Proxy DLL built using https://github.com/zeroKilo/ProxyDllMaker
 
+#define MAX_TRIES 100 // Maximum number of times to sigscan before giving up
+#define SIGSCAN_DELAY 500 // Delay between each (failed) sigscan attempt in milliseconds
+
 #include "stdafx.h"
 #include <windows.h>
 #include <stdio.h>
@@ -9,12 +12,8 @@
 
 #pragma pack(1)
 
-FARPROC p[1] = {0};
-
 DWORD __stdcall PatchThread(HANDLE mainProcess)
 {
-	Sleep(1000); // Delay to let the game init
-
 	MODULEINFO mainModuleInfo = {0};
 	if(!GetModuleInformation(mainProcess, GetModuleHandle(0), &mainModuleInfo, sizeof(mainModuleInfo)))
 	{
@@ -22,8 +21,29 @@ DWORD __stdcall PatchThread(HANDLE mainProcess)
 		return NULL;
 	}
 
-	// Credits for this: https://github.com/Sumwunn/AchievementsModsEnabler
-	DWORD64 dwSigScanAddress = Pattern::Scan(mainModuleInfo, "C3 40 32 FF 48 89 5C 24 40 48 89 6C 24 48");
+	// Scan for the signature over and over again until we reach a certain limit
+	// to account for slow start-up due to SteamVR initializing.
+	// We also need to patch it at a specific moment (before the intro is played?) to
+	// avoid it either not working or crashing the game...
+	// Ugly solution but it works so eh
+	DWORD64 dwSigScanAddress = NULL;
+	int iTries = 0;
+	while(!dwSigScanAddress && iTries < MAX_TRIES)
+	{
+		// Credits for this: https://github.com/Sumwunn/AchievementsModsEnabler
+		dwSigScanAddress = Pattern::Scan(mainModuleInfo, "C3 40 32 FF 48 89 5C 24 40 48 89 6C 24 48");
+
+		if(dwSigScanAddress)
+		{
+			break;
+		}
+		else 
+		{
+			iTries++;
+			Sleep(SIGSCAN_DELAY);
+		}
+	}
+
 	if(dwSigScanAddress)
 	{
 		DWORD64 dwPatchAddress = (dwSigScanAddress - 0x29);
@@ -32,12 +52,11 @@ DWORD __stdcall PatchThread(HANDLE mainProcess)
 		// ret
 		BYTE patchBytes[] = {0xB0, 0x00, 0xC3};
 
-
 		memcpy((void*)dwPatchAddress, patchBytes, sizeof(patchBytes));
 	}
 	else
 	{
-		MessageBoxA(NULL, "GetModuleInformation failed", "ERROR", MB_ICONERROR);
+		MessageBoxA(NULL, "dwSigScanAddress null", "ERROR", MB_ICONERROR);
 		return NULL;
 	}
 
@@ -46,17 +65,11 @@ DWORD __stdcall PatchThread(HANDLE mainProcess)
 
 extern "C" BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 {
-	static HINSTANCE hL;
 	if(reason == DLL_PROCESS_ATTACH)
 	{
-		hL = LoadLibrary(_T(".\\steam_api64_org.dll"));
-		if(!hL) return false;
-		p[0] = GetProcAddress(hL, "SteamAPI_Init");
-		
 		CreateThread(NULL, 0, PatchThread, GetCurrentProcess(), 0, NULL);
 	}
-	if(reason == DLL_PROCESS_DETACH)
-		FreeLibrary(hL);
+
 	return TRUE;
 }
 
@@ -1318,13 +1331,7 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 
 #pragma comment(linker, "/export:SteamAPI_GetSteamInstallPath=steam_api64_org.SteamAPI_GetSteamInstallPath")
 
-extern "C" long Proxy_SteamAPI_Init()
-{
-	typedef long(__stdcall *pS)();
-	pS pps = (pS)p[0 * 4];
-	long rv = pps();
-	return rv;
-}
+#pragma comment(linker, "/export:SteamAPI_Init=steam_api64_org.SteamAPI_Init")
 
 #pragma comment(linker, "/export:SteamAPI_InitSafe=steam_api64_org.SteamAPI_InitSafe")
 
@@ -1445,5 +1452,3 @@ extern "C" long Proxy_SteamAPI_Init()
 #pragma comment(linker, "/export:SteamController_TriggerHapticPulse=steam_api64_org.SteamController_TriggerHapticPulse")
 
 #pragma comment(linker, "/export:g_pSteamClientGameServer=steam_api64_org.g_pSteamClientGameServer")
-
-

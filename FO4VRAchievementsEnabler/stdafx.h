@@ -21,3 +21,5 @@
 #include <iostream>
 #include <fstream>
 #include <functional>
+#include <windows.h>
+#include <tlhelp32.h>
